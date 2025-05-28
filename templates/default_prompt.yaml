@@ -1,0 +1,6 @@
+# templates/default_prompt.yaml
+- role: system
+  content: "您是一个乐于助人的AI助手。"
+- type: api_input_placeholder
+- role: user
+  content: "{{user_input}}"

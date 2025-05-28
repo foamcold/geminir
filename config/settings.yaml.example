@@ -1,0 +1,10 @@
+# config/settings.yaml
+app_name: "hajimir"
+log_level: "INFO"
+
+proxy:
+  prompt_template_path: "templates/default_prompt.yaml" # 提示词模板文件路径
+  fake_streaming:
+    enabled: true          # 是否启用假流式
+    heartbeat_interval: 1  # (秒) 假流式心跳间隔
+  openai_request_timeout: 600 # (秒) 请求OpenAI的超时时间
