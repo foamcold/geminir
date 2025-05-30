@@ -12,7 +12,8 @@ server_port: 8000       # 服务器监听的端口号。
 
 # 代理核心功能配置
 proxy:
-  prompt_template_path: "templates/default_prompt.yaml" # 默认提示词模板文件的路径
+  prompt_template_path_with_input: "templates/with_input.yaml"     # 当 {{user_input}} 有内容时使用的模板文件路径
+  prompt_template_path_without_input: "templates/without_input.yaml" # 当 {{user_input}} 无内容时使用的模板文件路径
   openai_request_timeout: 600 # (秒) 代理向目标 OpenAI/Gemini 服务发出请求的超时时间。最小值10秒。
   
   # Gemini 2.5 Pro 生成参数默认配置

@@ -1,5 +1,6 @@
 config/settings.yaml
 templates/test.yaml
+templates/test2.yaml
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
