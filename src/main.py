@@ -197,13 +197,23 @@ app = FastAPI(
 async def chat_completions_endpoint(request: Request):
     """
     处理聊天补全请求的 API 端点。
-    (文档字符串保持不变)
+    只接受客户端的模型名称、消息内容、流式设置和 API 密钥，其他所有参数都将被忽略。
     """
     try:
         original_body = await request.json()
     except Exception as e:
         logger.error(f"解析请求体失败: {e}", exc_info=settings.debug_mode)
         raise HTTPException(status_code=400, detail=f"无效的 JSON 请求体: {e}")
+
+    # 记录并过滤客户端传递的不支持参数
+    allowed_client_params = {"model", "messages", "stream"}
+    ignored_params = []
+    for key in original_body.keys():
+        if key not in allowed_client_params:
+            ignored_params.append(f"{key}={original_body[key]}")
+    
+    if ignored_params:
+        logger.info(f"忽略客户端传递的以下参数（将使用配置文件默认值）: {', '.join(ignored_params)}")
 
     auth_header = request.headers.get("Authorization")
     client_requests_stream: bool = original_body.get("stream", False)

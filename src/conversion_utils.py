@@ -92,93 +92,48 @@ def convert_openai_to_gemini_request(
     # 获取配置文件中的默认 Gemini 生成参数
     default_config = settings.proxy.gemini_generation
     
-    # 映射 OpenAI 参数到 Gemini `generationConfig`，优先使用客户端请求中的参数，否则使用配置文件默认值
+    # 映射 OpenAI 参数到 Gemini `generationConfig`，强制使用配置文件默认值，忽略客户端传递的参数
     
-    # 温度 (temperature)
+    # 温度 (temperature) - 强制使用配置文件默认值
     if "temperature" in original_openai_request and original_openai_request["temperature"] is not None:
-        try:
-            generation_config["temperature"] = float(original_openai_request["temperature"])
-        except ValueError:
-            logger.warning(f"无法将 temperature '{original_openai_request['temperature']}' 转换为浮点数，使用默认值 {default_config.temperature}。")
-            generation_config["temperature"] = default_config.temperature
-    else:
-        generation_config["temperature"] = default_config.temperature
+        logger.info(f"客户端请求的 temperature 值为 {original_openai_request['temperature']}，但将使用配置文件默认值 {default_config.temperature}")
+    generation_config["temperature"] = default_config.temperature
 
-    # Top P (top_p -> topP)
+    # Top P (top_p -> topP) - 强制使用配置文件默认值
     if "top_p" in original_openai_request and original_openai_request["top_p"] is not None:
-        try:
-            generation_config["topP"] = float(original_openai_request["top_p"]) # Gemini 使用驼峰式 topP
-        except ValueError:
-            logger.warning(f"无法将 top_p '{original_openai_request['top_p']}' 转换为浮点数，使用默认值 {default_config.top_p}。")
-            generation_config["topP"] = default_config.top_p
-    else:
-        generation_config["topP"] = default_config.top_p
+        logger.info(f"客户端请求的 top_p 值为 {original_openai_request['top_p']}，但将使用配置文件默认值 {default_config.top_p}")
+    generation_config["topP"] = default_config.top_p
             
-    # 最大令牌数 (max_tokens -> maxOutputTokens)
+    # 最大令牌数 (max_tokens -> maxOutputTokens) - 强制使用配置文件默认值
     if "max_tokens" in original_openai_request and original_openai_request["max_tokens"] is not None:
-        try:
-            generation_config["maxOutputTokens"] = int(original_openai_request["max_tokens"])
-        except ValueError:
-            logger.warning(f"无法将 max_tokens '{original_openai_request['max_tokens']}' 转换为整数，使用默认值 {default_config.max_output_tokens}。")
-            generation_config["maxOutputTokens"] = default_config.max_output_tokens
-    else:
-        generation_config["maxOutputTokens"] = default_config.max_output_tokens
+        logger.info(f"客户端请求的 max_tokens 值为 {original_openai_request['max_tokens']}，但将使用配置文件默认值 {default_config.max_output_tokens}")
+    generation_config["maxOutputTokens"] = default_config.max_output_tokens
 
-    # Top K (新增支持)
+    # Top K - 强制使用配置文件默认值
     if "top_k" in original_openai_request and original_openai_request["top_k"] is not None:
-        try:
-            generation_config["topK"] = int(original_openai_request["top_k"])
-        except ValueError:
-            logger.warning(f"无法将 top_k '{original_openai_request['top_k']}' 转换为整数，使用默认值 {default_config.top_k}。")
-            generation_config["topK"] = default_config.top_k
-    else:
-        generation_config["topK"] = default_config.top_k
+        logger.info(f"客户端请求的 top_k 值为 {original_openai_request['top_k']}，但将使用配置文件默认值 {default_config.top_k}")
+    generation_config["topK"] = default_config.top_k
 
-    # 候选数量 (新增支持)
+    # 候选数量 - 强制使用配置文件默认值
     if "candidate_count" in original_openai_request and original_openai_request["candidate_count"] is not None:
-        try:
-            generation_config["candidateCount"] = int(original_openai_request["candidate_count"])
-        except ValueError:
-            logger.warning(f"无法将 candidate_count '{original_openai_request['candidate_count']}' 转换为整数，使用默认值 {default_config.candidate_count}。")
-            generation_config["candidateCount"] = default_config.candidate_count
-    else:
-        generation_config["candidateCount"] = default_config.candidate_count
+        logger.info(f"客户端请求的 candidate_count 值为 {original_openai_request['candidate_count']}，但将使用配置文件默认值 {default_config.candidate_count}")
+    generation_config["candidateCount"] = default_config.candidate_count
 
-    # 显示思考过程和思考预算 (新增支持)
-    # 注意：这些参数不直接添加到 generation_config 中，而是构建 thinkingConfig
-    include_thoughts_value = None
-    thinking_budget_value = None
-    
-    # 处理 show_thinking 参数 (映射到 includeThoughts)
+    # 显示思考过程和思考预算 - 强制使用配置文件默认值
+    # 处理 show_thinking 参数 - 强制使用配置文件默认值
     if "show_thinking" in original_openai_request and original_openai_request["show_thinking"] is not None:
-        try:
-            include_thoughts_value = bool(original_openai_request["show_thinking"])
-        except (ValueError, TypeError):
-            logger.warning(f"无法将 show_thinking '{original_openai_request['show_thinking']}' 转换为布尔值，使用默认值 {default_config.show_thinking}。")
-            include_thoughts_value = default_config.show_thinking
-    else:
-        include_thoughts_value = default_config.show_thinking
+        logger.info(f"客户端请求的 show_thinking 值为 {original_openai_request['show_thinking']}，但将使用配置文件默认值 {default_config.show_thinking}")
+    include_thoughts_value = default_config.show_thinking
 
-    # 处理 thinking_budget 参数
+    # 处理 thinking_budget 参数 - 强制使用配置文件默认值
     if "thinking_budget" in original_openai_request and original_openai_request["thinking_budget"] is not None:
-        try:
-            thinking_budget_value = int(original_openai_request["thinking_budget"])
-        except ValueError:
-            logger.warning(f"无法将 thinking_budget '{original_openai_request['thinking_budget']}' 转换为整数，使用默认值 {default_config.thinking_budget}。")
-            thinking_budget_value = default_config.thinking_budget
-    else:
-        thinking_budget_value = default_config.thinking_budget
+        logger.info(f"客户端请求的 thinking_budget 值为 {original_openai_request['thinking_budget']}，但将使用配置文件默认值 {default_config.thinking_budget}")
+    thinking_budget_value = default_config.thinking_budget
 
-    # 停止序列 (stop -> stopSequences)
-    # OpenAI 的 'stop' 可以是单个字符串或字符串列表。Gemini 的 'stopSequences' 是字符串列表。
-    openai_stop = original_openai_request.get("stop")
-    if openai_stop is not None:
-        if isinstance(openai_stop, str):
-            generation_config["stopSequences"] = [openai_stop]
-        elif isinstance(openai_stop, list) and all(isinstance(s, str) for s in openai_stop):
-            generation_config["stopSequences"] = openai_stop
-        else:
-            logger.warning(f"OpenAI 请求中的 'stop' 参数格式无效: {openai_stop}。期望是字符串或字符串列表。该参数将被忽略。")
+    # 停止序列 (stop -> stopSequences) - 忽略客户端传递的值
+    if "stop" in original_openai_request and original_openai_request["stop"] is not None:
+        logger.info(f"客户端请求包含 stop 参数 {original_openai_request['stop']}，但将被忽略，不设置停止序列")
+    # 不设置 stopSequences，使用 Gemini 默认行为
 
     # 安全设置 (safety_settings) 通常在调用 Gemini API 时作为顶层参数传递给 SDK 方法，
     # 或者包含在 `generationConfig` 中（取决于具体的 SDK 版本和方法）。
