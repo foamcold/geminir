@@ -1,10 +1,31 @@
-# config/settings.yaml
-app_name: "hajimir"
-log_level: "INFO"
+# config/settings.yaml.example
+# 这是应用的配置文件示例。
+# 您可以复制此文件为 settings.yaml 并根据需要修改其中的值。
 
+app_name: "gajimir" # 应用名称，用于日志等
+log_level: "INFO"   # 日志级别 (INFO, DEBUG, WARNING, ERROR, CRITICAL)
+debug_mode: false   # 是否启用调试模式。如果为 true，可能会输出更详细的日志。
+
+# Uvicorn 开发服务器配置 (仅当直接运行 src/main.py 时生效)
+server_host: "0.0.0.0"  # 服务器监听的主机地址。 "0.0.0.0" 表示监听所有可用网络接口。
+server_port: 8000       # 服务器监听的端口号。
+
+# 代理核心功能配置
 proxy:
-  prompt_template_path: "templates/default_prompt.yaml" # 提示词模板文件路径
+  prompt_template_path: "templates/default_prompt.yaml" # 默认提示词模板文件的路径
+  openai_request_timeout: 600 # (秒) 代理向目标 OpenAI/Gemini 服务发出请求的超时时间。最小值10秒。
+  
+  # Gemini 2.5 Pro 生成参数默认配置
+  gemini_generation:
+    temperature: 1.0          # 控制生成文本的随机性 (0-2)
+    max_output_tokens: 65535  # 最大输出词元数 (1-65535)
+    top_p: 1.0               # 控制采样时要考虑的词元比例 (0-1)
+    top_k: 64                # 控制采样时要考虑的前 K 个词元
+    candidate_count: 1       # 生成候选响应数量 (1-8)
+    show_thinking: false     # 是否返回模型内部思考过程
+    thinking_budget: 1024    # 思考预算，指导模型可使用的思考 token 数量 (0-24576)
+  
+  # 模拟流式响应配置
   fake_streaming:
-    enabled: true          # 是否启用假流式
-    heartbeat_interval: 1  # (秒) 假流式心跳间隔
-  openai_request_timeout: 600 # (秒) 请求OpenAI的超时时间
+    enabled: true          # 是否启用模拟流式响应功能
+    heartbeat_interval: 1  # (秒) 模拟流式响应时发送心跳信号的间隔时间。最小值1秒。

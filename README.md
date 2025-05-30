@@ -16,10 +16,20 @@
     -   支持在 YAML 提示词模板文件中定义 `type: 正则` 的规则块。
     -   每个规则块包含 `查找` (正则表达式) 和 `替换` (替换字符串，支持捕获组如 `\1`, `\g<name>`)。
     -   这些规则会按顺序应用于从 Gemini API 获取并已转换为 OpenAI 格式的助手消息的 `content` 字段，在最终返回给客户端之前。
--   **参数映射**: 将 OpenAI 请求中的 `temperature`, `max_tokens` (映射为 `maxOutputTokens`), `top_p`, `stop` (映射为 `stopSequences`) 等参数映射到 Gemini API 的 `generationConfig`。
+-   **参数映射**: 
+    -   将 OpenAI 请求中的参数映射到 Gemini API 的 `generationConfig` 和 `thinkingConfig`：
+        -   `temperature` → `generationConfig.temperature` (控制生成文本的随机性，范围 0-2)
+        -   `max_tokens` → `generationConfig.maxOutputTokens` (最大输出词元数，Gemini 2.5 Pro 上限 65535)
+        -   `top_p` → `generationConfig.topP` (控制采样时要考虑的词元比例，范围 0-1)
+        -   `top_k` → `generationConfig.topK` (控制采样时要考虑的前 K 个词元)
+        -   `candidate_count` → `generationConfig.candidateCount` (生成候选响应数量，范围 1-8)
+        -   `show_thinking` → `thinkingConfig.includeThoughts` (Gemini 2.5 Flash 特色功能，返回模型内部思考过程)
+        -   `thinking_budget` → `thinkingConfig.thinkingBudget` (思考预算，指导模型可使用的思考 token 数量，范围 0-24576)
+        -   `stop` → `generationConfig.stopSequences` (停止序列)
+    -   **默认值配置**: 所有参数都有配置文件中定义的默认值，客户端请求中未指定的参数将使用默认值。
 -   **伪流式处理**:
     -   后端对 Gemini API 的调用始终是非流式的。
-    -   如果客户端请求流式响应 (`stream: true`)，服务将提供“伪流式”：立即建立连接，定期发送心跳，获取到完整 Gemini 响应并转换后，将其内容分块模拟 SSE 事件发送，最后以 `data: [DONE]\n\n` 结束。
+    -   如果客户端请求流式响应 (`stream: true`)，服务将提供"伪流式"：立即建立连接，定期发送心跳，获取到完整 Gemini 响应并转换后，将其内容分块模拟 SSE 事件发送，最后以 `data: [DONE]\n\n` 结束。
 -   **API 密钥处理**: 从客户端请求的 `Authorization: Bearer <YOUR_GEMINI_API_KEY>` 头中获取 Google Gemini API 密钥。
 -   **配置文件驱动**: 通过 `config/settings.yaml` 进行日志级别、模板路径等配置。
 -   **并发支持**: 基于 FastAPI 和 `asyncio`。
@@ -73,7 +83,15 @@
         -   `log_level`: 日志级别 (如 INFO, DEBUG)。
         -   `proxy.prompt_template_path`: 提示词模板文件的路径。
         -   `proxy.fake_streaming.heartbeat_interval`: （伪）流式心跳间隔（秒）。
-        -   `proxy.api_request_timeout`: 请求 Gemini API 的超时时间（秒）（原 `openai_request_timeout`）。
+        -   `proxy.openai_request_timeout`: 请求 Gemini API 的超时时间（秒）。
+        -   `proxy.gemini_generation`: Gemini 2.5 Pro 生成参数的默认配置：
+            -   `temperature`: 控制生成文本的随机性 (默认 1.0)
+            -   `max_output_tokens`: 最大输出词元数 (默认 65535)
+            -   `top_p`: 控制采样时要考虑的词元比例 (默认 1.0)
+            -   `top_k`: 控制采样时要考虑的前 K 个词元 (默认 64)
+            -   `candidate_count`: 生成候选响应数量 (默认 1)
+            -   `show_thinking`: 是否返回模型内部思考过程 (默认 false)
+            -   `thinking_budget`: 思考预算，指导模型可使用的思考 token 数量 (默认 1024，范围 0-24576)
     -   编辑 `templates/default_prompt.yaml` (或您在配置中指定的其他模板文件) 来定义您的提示词结构、动态变量和正则规则。
 
 5.  **运行服务** (开发模式):
@@ -98,17 +116,23 @@
 使用标准的 OpenAI Chat Completion API 请求格式。
 ```json
 {
-  "model": "gemini-1.5-flash-latest", // 指定 Gemini 模型名称
+  "model": "gemini-2.5-flash-preview-05-20", // 指定 Gemini 模型名称
   "messages": [
     {"role": "system", "content": "你是一个乐于助人的助手。"},
     {"role": "user", "content": "你好！请介绍一下你自己。"}
   ],
-  "temperature": 0.7,
-  "max_tokens": 150, // 会映射到 Gemini 的 maxOutputTokens
-  "stream": false // 或 true，以启用伪流式响应
+  "temperature": 0.7,           // 控制随机性 (0-2)
+  "max_tokens": 150,            // 会映射到 Gemini 的 maxOutputTokens
+  "top_p": 0.9,                // 控制采样词元比例 (0-1)
+  "top_k": 40,                 // 控制前 K 个词元
+  "candidate_count": 1,        // 候选响应数量 (1-8)
+  "show_thinking": false,      // 是否显示思考过程 (Gemini 2.5 Flash 特色功能)
+  "thinking_budget": 1024,     // 思考预算，指导模型可使用的思考 token 数量 (0-24576)
+  "stream": false              // 或 true，以启用伪流式响应
 }
 ```
 -   `system` 角色的消息会被合并，并作为普通 `user` 消息包含在发送给 Gemini 的 `contents` 中。
+-   未指定的参数将使用配置文件中的默认值。
 
 ## 提示词模板 (`templates/default_prompt.yaml`)
 

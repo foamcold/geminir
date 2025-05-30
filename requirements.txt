@@ -3,4 +3,5 @@ uvicorn[standard]
 httpx
 PyYAML
 pydantic
-google-generativeai
+google-genai
+colorlog
