@@ -508,8 +508,16 @@ def _prepare_openai_messages(original_body: Dict[str, Any]) -> Dict[str, Any]:
         logger.debug(f"消息合并后，消息数量从 {len(final_messages_step2)} 变为 {len(merged_messages)}。")
 
     # 准备最终返回结果
+    model_name = original_body.get("model")
+    # 清理模型名称，去除可能的换行符、回车符和前后空格
+    if isinstance(model_name, str):
+        model_name = model_name.strip().replace('\r', '').replace('\n', '')
+        if not model_name:  # 如果清理后为空
+            model_name = None
+            logger.warning("模型名称在清理后为空字符串。")
+    
     result = {
-        "model": original_body.get("model"), # 保留原始请求中的模型名称
+        "model": model_name,
         "messages": merged_messages,
         "selected_regex_rules": current_regex_rules
     }

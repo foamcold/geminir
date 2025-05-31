@@ -18,14 +18,27 @@ from .gemini_client import execute_non_stream_gemini_request
 from .streaming_utils import fake_stream_generator_from_non_stream
 from .template_handler import _prepare_openai_messages
 
+import sys
+import os
+
+def is_interactive_terminal():
+    """检测是否在交互式终端环境中运行"""
+    return (
+        hasattr(sys.stderr, 'isatty') and sys.stderr.isatty() and
+        hasattr(sys.stdout, 'isatty') and sys.stdout.isatty() and
+        os.getenv('TERM') is not None and
+        os.getenv('NO_COLOR') is None  # 支持 NO_COLOR 环境变量
+    )
+
 # ---- 自定义彩色日志格式化器 (含中文级别) ----
 class ChineseColoredFormatter(colorlog.ColoredFormatter):
     """
     自定义日志格式化器，支持颜色和中文日志级别名称。
+    在非交互式环境中自动禁用颜色。
     """
     level_name_map: Dict[str, str] = {
         "DEBUG": "调试",
-        "INFO": "信息",
+        "INFO": "信息", 
         "WARNING": "警告",
         "ERROR": "错误",
         "CRITICAL": "严重",
@@ -43,6 +56,23 @@ class ChineseColoredFormatter(colorlog.ColoredFormatter):
         "Application shutdown complete.": "应用程序关闭完成。",
         "Finished server process": "已完成服务器进程",
     }
+
+    def __init__(self, *args, **kwargs):
+        # 如果不是交互式终端，禁用颜色
+        if not is_interactive_terminal():
+            kwargs['log_colors'] = {}
+            kwargs['secondary_log_colors'] = {}
+            # 移除格式字符串中的颜色代码
+            if 'fmt' in kwargs:
+                fmt = kwargs['fmt']
+                # 移除所有颜色相关的格式代码
+                import re
+                fmt = re.sub(r'%\([^)]*color[^)]*\)s', '', fmt)
+                fmt = re.sub(r'%\(reset\)s', '', fmt)
+                fmt = re.sub(r'%\(blue\)s', '', fmt)
+                fmt = re.sub(r'%\(green\)s', '', fmt)
+                kwargs['fmt'] = fmt
+        super().__init__(*args, **kwargs)
 
     def format(self, record: logging.LogRecord) -> str:
         # 修改 record.levelname 为中文，以便在格式字符串中使用 %(levelname_chinese)s
@@ -70,6 +100,60 @@ class ChineseColoredFormatter(colorlog.ColoredFormatter):
         
         return result
 
+class PlainChineseFormatter(logging.Formatter):
+    """
+    纯文本中文日志格式化器，不包含任何颜色代码。
+    用于生产环境或非交互式环境。
+    """
+    level_name_map: Dict[str, str] = {
+        "DEBUG": "调试",
+        "INFO": "信息",
+        "WARNING": "警告", 
+        "ERROR": "错误",
+        "CRITICAL": "严重",
+    }
+    
+    message_translation_map: Dict[str, str] = {
+        "Started server process": "已启动服务器进程",
+        "Waiting for application startup.": "等待应用程序启动。",
+        "Application startup complete.": "应用程序启动完成。",
+        "Uvicorn running on": "Uvicorn 运行在",
+        "(Press CTRL+C to quit)": "（按 CTRL+C 退出）",
+        "Shutting down": "正在关闭",
+        "Waiting for application shutdown.": "等待应用程序关闭。",
+        "Application shutdown complete.": "应用程序关闭完成。",
+        "Finished server process": "已完成服务器进程",
+    }
+
+    def format(self, record: logging.LogRecord) -> str:
+        # 修改 record.levelname 为中文
+        original_levelname = record.levelname
+        record.levelname_chinese = self.level_name_map.get(original_levelname, original_levelname)
+        
+        # 翻译消息内容
+        message = record.getMessage()
+        for english_text, chinese_text in self.message_translation_map.items():
+            if english_text in message:
+                message = message.replace(english_text, chinese_text)
+        
+        # 临时修改 record 的消息
+        original_msg = record.msg
+        original_args = record.args
+        record.msg = message
+        record.args = ()
+        
+        try:
+            result = super().format(record)
+        finally:
+            # 恢复原始消息
+            record.msg = original_msg
+            record.args = original_args
+        
+        return result
+
+# 根据环境选择合适的格式化器
+USE_COLORS = is_interactive_terminal()
+
 # ---- 日志配置字典 ----
 # 日志级别将从 settings.log_level.upper() 获取
 # 应用名称将从 settings.app_name 获取
@@ -78,11 +162,11 @@ LOGGING_CONFIG: Dict[str, Any] = {
     "disable_existing_loggers": False, # 通常设为 False
     "formatters": {
         "default_color": {
-            "()": "__main__.ChineseColoredFormatter", # 指向上面定义的类
+            "()": "src.main.ChineseColoredFormatter" if USE_COLORS else "src.main.PlainChineseFormatter",
             # 格式: 时间 - 应用名称 - 级别(中文) - 消息
-            # 颜色通过 colorlog 的 log_colors 和 secondary_log_colors 控制
-            "format": f"%(log_color)s%(asctime)s - %(blue)s{settings.app_name}%(reset)s - %(log_color)s%(levelname_chinese)s%(reset)s - %(message)s",
+            "format": f"%(asctime)s - {settings.app_name} - %(levelname_chinese)s - %(message)s" if not USE_COLORS else f"%(log_color)s%(asctime)s - %(blue)s{settings.app_name}%(reset)s - %(log_color)s%(levelname_chinese)s%(reset)s - %(message)s",
             "datefmt": "%Y-%m-%d %H:%M:%S",
+        } | ({
             "log_colors": { # 日志级别名称的颜色
                 "DEBUG": "cyan",
                 "INFO": "green",
@@ -100,13 +184,13 @@ LOGGING_CONFIG: Dict[str, Any] = {
             },
             "reset": True, # 每条日志后重置颜色
             "style": "%",
-        },
+        } if USE_COLORS else {}),
         "access_color": {
-            "()": "colorlog.ColoredFormatter", # Uvicorn 访问日志直接用 colorlog
+            "()": "colorlog.ColoredFormatter" if USE_COLORS else "src.main.PlainChineseFormatter",
             # 格式: 时间 - 应用名称 - "访问" - 消息内容
-            # "访问" 硬编码为中文，并指定颜色
-            "format": f"%(log_color)s%(asctime)s - %(blue)s{settings.app_name}%(reset)s - %(green)s访问%(reset)s - %(message)s",
+            "format": f"%(asctime)s - {settings.app_name} - 访问 - %(message)s" if not USE_COLORS else f"%(log_color)s%(asctime)s - %(blue)s{settings.app_name}%(reset)s - %(green)s访问%(reset)s - %(message)s",
             "datefmt": "%Y-%m-%d %H:%M:%S",
+        } | ({
             "log_colors": { # 访问日志通常是 INFO 级别
                 "INFO": "green", # 用于 "访问" 二字的颜色 (通过 %(green)s 实现)
             },
@@ -116,7 +200,7 @@ LOGGING_CONFIG: Dict[str, Any] = {
             },
             "reset": True,
             "style": "%",
-        },
+        } if USE_COLORS else {}),
     },
     "handlers": {
         "default": { # 应用日志和 uvicorn.error 的处理器
@@ -169,7 +253,9 @@ logger = logging.getLogger(settings.app_name)
 async def lifespan(app_instance: FastAPI):
     # 应用启动时执行的逻辑
     # 日志现在应该会自动使用 LOGGING_CONFIG 中为 settings.app_name logger 配置的格式
-    logger.info(f"应用 '{settings.app_name}' (通过 lifespan) 启动中...") # logger.info 会使用新配置
+    logger.info(f"应用 '{settings.app_name}' (通过 lifespan) 启动中...")
+    logger.info(f"日志模式: {'彩色终端模式' if USE_COLORS else '纯文本模式（适用于后台部署）'}")
+    logger.info(f"交互式终端检测: {is_interactive_terminal()}")
     # 以下日志由 uvicorn.error logger 处理，也会使用新配置
     # logger.info(f"服务器监听地址: {settings.server_host}:{settings.server_port}")
     # logger.info(f"调试模式: {settings.debug_mode}")
@@ -204,6 +290,15 @@ async def chat_completions_endpoint(request: Request):
     except Exception as e:
         logger.error(f"解析请求体失败: {e}", exc_info=settings.debug_mode)
         raise HTTPException(status_code=400, detail=f"无效的 JSON 请求体: {e}")
+
+    # 清理模型名称，去除可能的换行符、回车符和前后空格
+    if "model" in original_body and isinstance(original_body["model"], str):
+        cleaned_model = original_body["model"].strip().replace('\r', '').replace('\n', '')
+        if not cleaned_model:
+            logger.error("模型名称在清理后为空字符串。")
+            raise HTTPException(status_code=400, detail="模型名称不能为空。")
+        original_body["model"] = cleaned_model
+        logger.debug(f"模型名称已清理: '{cleaned_model}'")
 
     # 记录并过滤客户端传递的不支持参数
     allowed_client_params = {"model", "messages", "stream"}
