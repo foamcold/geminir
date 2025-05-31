@@ -148,7 +148,7 @@ python -m src.main
 - 客户端传递的其他参数（如 `temperature`, `max_tokens`, `top_p`, `top_k`, `candidate_count`, `show_thinking`, `thinking_budget`, `stop` 等）将被忽略。
 - 所有生成参数都使用配置文件 `config/settings.yaml` 中 `proxy.gemini_generation` 部分定义的默认值。
 - 如果客户端发送了这些被忽略的参数，系统会记录日志显示哪些参数被忽略。
-- `system` 角色的消息会被合并，并作为普通 `user` 消息包含在发送给 Gemini 的 `contents` 中。
+- **消息合并规则**: 所有相邻的 `system` 和 `user` 角色消息会被合并成一个 `user` 消息，只与 `assistant` 消息交替出现。这确保了发送给 Gemini 的消息序列是 `user` 和 `model` 角色的严格交替。
 
 ## 提示词模板 (`templates/default_prompt.yaml`)
 

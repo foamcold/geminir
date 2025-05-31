@@ -372,7 +372,7 @@ def _prepare_openai_messages(original_body: Dict[str, Any]) -> Dict[str, Any]:
         - 将模板内容中的 `{{user_input}}` 替换为最后一个用户输入。
     5. 对所有生成的消息内容应用全局动态变量处理 ({{roll}}, {{random}})
     6. 移除内容为空或 None 的消息。
-    7. 合并相邻的、角色相同的消息。
+    7. 合并相邻的 system 和 user 消息，只与 assistant 消息交替
 
     Args:
         original_body (Dict[str, Any]): 原始的 OpenAI 格式请求体，
@@ -483,29 +483,51 @@ def _prepare_openai_messages(original_body: Dict[str, Any]) -> Dict[str, Any]:
         if not final_messages_step2 and original_count > 0: # 如果所有消息都被移除了
             logger.warning("所有消息因 content 为空或 None 被移除。最终消息列表将为空。")
     
-    # 7. 合并相邻的、角色相同的消息
+    # 7. 合并相邻的 system 和 user 消息，只与 assistant 消息交替
     if not final_messages_step2:
         merged_messages: List[Dict[str, Any]] = []
         logger.debug("消息列表为空，无需合并。")
     else:
         merged_messages = []
         # 深拷贝第一个消息作为合并起点
-        current_message = copy.deepcopy(final_messages_step2[0]) 
+        current_message = copy.deepcopy(final_messages_step2[0])
+        
+        # 如果第一个消息是 system，将其角色改为 user
+        if current_message.get("role") == "system":
+            current_message["role"] = "user"
         
         for i in range(1, len(final_messages_step2)):
             next_msg = final_messages_step2[i]
-            # 检查角色是否相同，且内容是否都是字符串（才能合并）
-            if next_msg.get("role") == current_message.get("role") and \
-               isinstance(next_msg.get("content"), str) and \
-               isinstance(current_message.get("content"), str):
+            next_role = next_msg.get("role")
+            current_role = current_message.get("role")
+            
+            # 检查是否可以合并：
+            # 1. 当前消息是 user 或 system，下一个消息也是 user 或 system
+            # 2. 内容都是字符串类型
+            can_merge = (
+                current_role in ["user", "system"] and 
+                next_role in ["user", "system"] and
+                isinstance(next_msg.get("content"), str) and 
+                isinstance(current_message.get("content"), str)
+            )
+            
+            if can_merge:
                 # 合并内容，用换行符分隔
                 current_message["content"] += "\n" + next_msg["content"]
+                # 确保合并后的消息角色是 user
+                current_message["role"] = "user"
             else:
-                # 角色不同或内容类型不适合合并，将当前已合并的消息加入列表
+                # 不能合并，将当前已合并的消息加入列表
                 merged_messages.append(current_message)
-                current_message = copy.deepcopy(next_msg) # 开始新的合并段
-        merged_messages.append(current_message) # 添加最后一个处理中的消息段
-        logger.debug(f"消息合并后，消息数量从 {len(final_messages_step2)} 变为 {len(merged_messages)}。")
+                # 开始新的合并段
+                current_message = copy.deepcopy(next_msg)
+                # 如果新消息是 system，将其角色改为 user
+                if current_message.get("role") == "system":
+                    current_message["role"] = "user"
+        
+        # 添加最后一个处理中的消息段
+        merged_messages.append(current_message)
+        logger.debug(f"消息合并后，消息数量从 {len(final_messages_step2)} 变为 {len(merged_messages)}。所有相邻的 system 和 user 消息已合并为 user 消息。")
 
     # 准备最终返回结果
     model_name = original_body.get("model")
