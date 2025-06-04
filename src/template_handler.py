@@ -391,21 +391,39 @@ def _prepare_openai_messages(original_body: Dict[str, Any]) -> Dict[str, Any]:
 
     # 1. 提取历史消息和最后一个用户输入
     processed_messages: List[Dict[str, Any]] = [] # 用于构建处理后的消息列表
-    last_user_input_content: str = ""             # 存储最后一个用户的输入内容
+    raw_last_user_content: Any = ""               # 存储最后一个用户的原始 content (可以是 str 或 list)
+    text_for_template_processing: str = ""        # 存储从最后一个用户 content 中提取的纯文本，用于模板逻辑
     historic_messages: List[Dict[str, Any]] = []  # 存储除最后一个用户输入外的历史消息
 
     if original_messages:
-        if original_messages[-1].get("role") == "user":
+        last_message = original_messages[-1]
+        if last_message.get("role") == "user":
             # 如果最后一条消息是用户消息，则将其视为当前用户输入，其余为历史
-            last_user_input_content = original_messages[-1].get("content", "")
+            raw_last_user_content = last_message.get("content", "")
             historic_messages = original_messages[:-1]
+            
+            # 从 raw_last_user_content 中提取纯文本用于模板处理
+            if isinstance(raw_last_user_content, list):
+                # 多模态内容，提取文本部分
+                text_parts = [
+                    part.get("text", "")
+                    for part in raw_last_user_content
+                    if isinstance(part, dict) and part.get("type") == "text"
+                ]
+                text_for_template_processing = " ".join(filter(None, text_parts)).strip()
+            elif isinstance(raw_last_user_content, str):
+                text_for_template_processing = raw_last_user_content
+            else:
+                # 其他意外类型，视为空文本
+                text_for_template_processing = ""
         else:
             # 如果最后一条不是用户消息，则所有消息都视为历史
             historic_messages = original_messages
+            # raw_last_user_content 和 text_for_template_processing 保持空字符串
     
-    # 2. 根据用户输入内容选择合适的模板文件
-    selected_template_path = _get_template_path_for_user_input(last_user_input_content)
-    logger.debug(f"根据用户输入选择模板文件: '{selected_template_path}' (用户输入长度: {len(last_user_input_content.strip()) if last_user_input_content else 0})")
+    # 2. 根据提取的纯文本用户输入内容选择合适的模板文件
+    selected_template_path = _get_template_path_for_user_input(text_for_template_processing)
+    logger.debug(f"根据用户输入选择模板文件: '{selected_template_path}' (提取的文本输入长度: {len(text_for_template_processing.strip()) if text_for_template_processing else 0})")
     
     # 3. 确保选定的模板已加载
     _load_templates(template_path=selected_template_path)
@@ -416,11 +434,14 @@ def _prepare_openai_messages(original_body: Dict[str, Any]) -> Dict[str, Any]:
     if not current_blueprints: # 如果没有加载任何模板蓝图
         logger.debug("未加载任何提示词模板，直接使用原始消息（如有）。")
         processed_messages.extend(copy.deepcopy(historic_messages)) # 直接使用历史消息
-        if last_user_input_content: # 如果有最后的用户输入，也添加进去
-             processed_messages.append({"role": "user", "content": last_user_input_content})
-        # 特殊情况：如果原始消息只有一条用户消息，且无历史，确保它被加入
-        elif not historic_messages and original_messages and original_messages[-1].get("role") == "user":
-            processed_messages.append(copy.deepcopy(original_messages[-1]))
+        # 如果有最后的用户输入 (raw_last_user_content 可能为空字符串或空列表，也可能包含有效内容)
+        # 只有当原始消息的最后一条是 user 时，raw_last_user_content 才可能有值
+        if original_messages and original_messages[-1].get("role") == "user":
+            # 添加包含原始 content (str 或 list) 的用户消息
+            processed_messages.append({"role": "user", "content": raw_last_user_content})
+        # 特殊情况：如果原始消息只有一条用户消息，且无历史，上面的逻辑已覆盖
+        # elif not historic_messages and original_messages and original_messages[-1].get("role") == "user":
+            # processed_messages.append(copy.deepcopy(original_messages[-1])) # original_messages[-1] 的 content 也是 raw_last_user_content
         
         # 如果上述处理后 processed_messages 仍为空，但 original_messages 不为空
         # (例如，original_messages 只包含 assistant 消息且无模板)，则直接使用原始消息。
@@ -440,21 +461,45 @@ def _prepare_openai_messages(original_body: Dict[str, Any]) -> Dict[str, Any]:
                 # 普通模板项，处理 {{user_input}} 占位符
                 content_template = blueprint_msg.get("content")
                 if isinstance(content_template, str):
-                    # 替换模板内容中的 {{user_input}} 为实际的最后一个用户输入
-                    temp_content = content_template.replace("{{user_input}}", last_user_input_content)
-                    blueprint_msg["content"] = temp_content 
+                    # 替换模板内容中的 {{user_input}} 为提取的纯文本用户输入
+                    temp_content = content_template.replace("{{user_input}}", text_for_template_processing)
+                    blueprint_msg["content"] = temp_content
                 processed_messages.append(blueprint_msg)
         
         # 检查模板中是否实际包含了 api_input_placeholder
         has_placeholder = any(bp.get("type") == "api_input_placeholder" for bp in current_blueprints)
-        if not has_placeholder and last_user_input_content:
-            # 如果模板中没有历史消息占位符，但用户有实际的最后输入，则应将其追加到末尾
-            logger.debug("模板中无 'api_input_placeholder'，但存在最后用户输入，将其追加。")
-            processed_messages.append({"role": "user", "content": last_user_input_content})
-        # 处理只有一个用户消息，且模板无占位符的情况
-        elif not has_placeholder and not historic_messages and original_messages and original_messages[-1].get("role") == "user":
-             logger.debug("模板中无 'api_input_placeholder'，原始消息仅一条用户消息，将其追加。")
-             processed_messages.append(copy.deepcopy(original_messages[-1]))
+        # 如果模板中没有历史消息占位符，但原始消息的最后一条是用户消息，
+        # 则应将其（包含原始 content）追加到末尾，以确保用户输入不丢失。
+        # 之前的逻辑在 "if not current_blueprints:" 分支中已经通过 raw_last_user_content 添加了最后的用户消息，
+        # 此处需要确保在有模板但无占位符时，如果最后一条是用户消息，它也被添加。
+        # 并且，要避免重复添加。
+        # 检查 processed_messages 中是否已经包含了原始的最后一条用户消息（通过比较对象或内容）
+        # 一个更简单的方法是，如果最后一条是用户消息，且模板没有占位符，就添加它，
+        # 但要确保它不是因为 "if not current_blueprints" 逻辑而被重复添加。
+        # 实际上，如果 original_messages[-1] 是 user role，raw_last_user_content 会有值。
+        
+        # 修正逻辑：如果模板没有占位符，并且原始最后一条消息是用户消息，
+        # 并且这条用户消息还没有被加入到 processed_messages 中（例如，模板为空，或者模板不含用户输入占位符）
+        # 这种情况通常是：模板只包含系统消息，然后我们期望追加用户的原始输入。
+        if not has_placeholder and original_messages and original_messages[-1].get("role") == "user":
+            # 检查是否已添加 (避免在无蓝图时重复添加)
+            # 如果 processed_messages 为空，或者最后一条不是我们刚提取的 raw_last_user_content
+            # (注意：deepcopy 会创建新对象，所以不能直接比较对象引用)
+            # 一个简单的检查是，如果 processed_messages 中最后一条用户消息的 content 不是 raw_last_user_content
+            
+            needs_to_add_raw_user_message = True
+            if processed_messages:
+                last_added_msg = processed_messages[-1]
+                # 检查最后添加的消息是否就是我们想要添加的原始用户消息
+                if last_added_msg.get("role") == "user" and last_added_msg.get("content") == raw_last_user_content:
+                    needs_to_add_raw_user_message = False
+            
+            if needs_to_add_raw_user_message:
+                logger.debug("模板中无 'api_input_placeholder'，且原始最后一条消息是用户消息，将其（含原始 content）追加。")
+                processed_messages.append({"role": "user", "content": raw_last_user_content})
+        # elif not has_placeholder and not historic_messages and original_messages and original_messages[-1].get("role") == "user":
+             # logger.debug("模板中无 'api_input_placeholder'，原始消息仅一条用户消息，将其追加。")
+             # processed_messages.append(copy.deepcopy(original_messages[-1])) # 这部分逻辑被上面的合并了
 
     # 5. 对所有消息内容应用全局动态变量处理 ({{roll}}, {{random}})
     final_messages_step1: List[Dict[str, Any]] = []
@@ -528,6 +573,44 @@ def _prepare_openai_messages(original_body: Dict[str, Any]) -> Dict[str, Any]:
         # 添加最后一个处理中的消息段
         merged_messages.append(current_message)
         logger.debug(f"消息合并后，消息数量从 {len(final_messages_step2)} 变为 {len(merged_messages)}。所有相邻的 system 和 user 消息已合并为 user 消息。")
+
+    # --- 开始修正：确保原始多模态用户输入被保留 ---
+    # raw_last_user_content 持有原始最后一条用户消息的 content (str 或 list)
+    # original_messages 是最原始的输入消息列表
+    if original_messages:
+        original_last_message = original_messages[-1]
+        # 检查原始最后一条消息是否为用户角色，并且其原始 content (raw_last_user_content) 是一个列表
+        if original_last_message.get("role") == "user" and isinstance(raw_last_user_content, list):
+            logger.debug(f"修正步骤：原始最后一条用户消息是多模态列表。尝试在 merged_messages 中恢复它。raw_last_user_content: {str(raw_last_user_content)[:200]}")
+            
+            found_and_updated = False
+            # 从后向前查找 merged_messages 中的最后一条 user 消息并更新其 content
+            # 这是因为经过模板处理和合并后，原始的用户输入（如果存在）通常会体现为最终消息列表中的最后一条用户消息
+            if merged_messages: # 确保 merged_messages 不是空的
+                for i in range(len(merged_messages) - 1, -1, -1):
+                    if merged_messages[i].get("role") == "user":
+                        logger.info(f"修正步骤：找到 merged_messages 中的最后一条用户消息 (索引 {i})，将其 content 更新为原始多模态列表。")
+                        merged_messages[i]["content"] = raw_last_user_content # 使用原始的多模态列表
+                        found_and_updated = True
+                        break
+            
+            if not found_and_updated:
+                # 如果 merged_messages 为空，或者在其中没有找到 user 角色的消息来更新（理论上不太可能在正常流程后发生）
+                # 则直接将原始的多模态用户消息追加到 merged_messages。
+                # 这种情况可能发生在例如：模板完全为空，且历史消息也为空或不含用户消息。
+                logger.debug("修正步骤：merged_messages 中未找到用户消息来更新，或者列表为空。将追加原始多模态用户消息。")
+                merged_messages.append({"role": "user", "content": raw_last_user_content})
+            
+            # 调试日志：检查修正后的状态
+            if merged_messages and merged_messages[-1].get("role") == "user":
+                 logger.debug(f"修正后，merged_messages 最后一条用户消息 content 类型: {type(merged_messages[-1].get('content'))}, content: {str(merged_messages[-1].get('content'))[:200]}")
+        elif original_last_message.get("role") == "user": # 原始是用户消息，但 content 不是 list (即是 str)
+             logger.debug(f"修正步骤：原始最后一条用户消息是文本（非多模态列表），无需特殊恢复。raw_last_user_content 类型: {type(raw_last_user_content)}")
+        else: # 原始最后一条消息不是 user
+            logger.debug("修正步骤：原始最后一条消息非用户角色，无需特殊恢复多模态 content。")
+    elif not original_messages:
+        logger.debug("修正步骤：original_messages 为空，无需进行多模态 content 恢复。")
+    # --- 修正结束 ---
 
     # 准备最终返回结果
     model_name = original_body.get("model")

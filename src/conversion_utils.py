@@ -12,6 +12,7 @@
 import json
 import time
 import logging
+import re # <--- 新增导入 re 模块
 from typing import Dict, Any, List, Optional
 
 from google.genai import types as google_genai_types # 导入 google.genai.types 以便类型注解
@@ -61,22 +62,73 @@ def convert_openai_to_gemini_request(
     # 通常作为第一个 'user' 角色的消息的一部分，或者通过特定的 'system' 角色（如果API支持）。
     # 当前实现将 'system' 消息转换为 'user' 角色。
 
-    for msg in openai_messages:
+    for msg_idx, msg in enumerate(openai_messages): # 添加索引用于日志
         role = msg.get("role")
-        content = msg.get("content", "") # 获取消息内容，默认为空字符串
-        if not isinstance(content, str): # 确保内容是字符串类型
-            content = str(content)
-
-        if role == "system":
-            # Gemini API 通常将系统指令视为用户消息序列的一部分，或有专门的 system_instruction 字段
-            # 根据最新 SDK (google-genai)，system message 可以直接放在 contents 里，角色为 user
-            gemini_contents.append({"role": "user", "parts": [{"text": content}]})
-        elif role == "user":
-            gemini_contents.append({"role": "user", "parts": [{"text": content}]})
-        elif role == "assistant": # OpenAI 的 'assistant' 对应 Gemini 的 'model'
-            gemini_contents.append({"role": "model", "parts": [{"text": content}]})
+        raw_content = msg.get("content") # 获取原始 content，可以是 str 或 list
+        
+        gemini_parts: List[Dict[str, Any]] = []
+        
+        # 角色映射
+        gemini_role = "user" # 默认角色
+        if role == "user" or role == "system": # OpenAI system message 转为 Gemini user message
+            gemini_role = "user"
+        elif role == "assistant":
+            gemini_role = "model"
         else:
-            logger.warning(f"在 OpenAI 消息中遇到不支持的角色 '{role}'，该消息将被跳过。")
+            logger.warning(f"在 OpenAI 消息中遇到不支持的角色 '{role}' (消息 #{msg_idx})，该消息将被跳过。")
+            continue
+
+        # 处理 content
+        if isinstance(raw_content, str):
+            if raw_content: # 只有非空字符串才添加 text part
+                gemini_parts.append({"text": raw_content})
+        elif isinstance(raw_content, list): # OpenAI 多模态格式
+            for item_idx, item_part in enumerate(raw_content):
+                if not isinstance(item_part, dict):
+                    logger.warning(f"多模态 content 中的项 (消息 #{msg_idx}, 项 #{item_idx}) 不是字典格式，已跳过: {item_part}")
+                    continue
+                
+                part_type = item_part.get("type")
+
+                if part_type == "text":
+                    text_content = item_part.get("text", "")
+                    if text_content: # 只有非空文本才添加
+                         gemini_parts.append({"text": text_content})
+                elif part_type == "image_url":
+                    image_url_obj = item_part.get("image_url", {})
+                    url_data = image_url_obj.get("url", "")
+                    
+                    match = re.match(r"^data:(image\/(?:png|jpeg|webp|heic|heif));base64,(.+)$", url_data)
+                    if match:
+                        mime_type = match.group(1)
+                        base64_data = match.group(2)
+                        gemini_parts.append({
+                            "inline_data": {
+                                "mime_type": mime_type,
+                                "data": base64_data
+                            }
+                        })
+                    else:
+                        logger.warning(f"无法解析 image_url data URI 或不支持的 MIME 类型 (消息 #{msg_idx}, 项 #{item_idx}): {url_data[:100]}...")
+                else:
+                    logger.warning(f"多模态 content 中 (消息 #{msg_idx}, 项 #{item_idx}) 遇到不支持的 part type: '{part_type}'，已跳过。")
+        elif raw_content is None:
+            logger.debug(f"消息 role '{role}' (消息 #{msg_idx}) 的 content 为 None，将生成空的 parts 列表。")
+        else:
+            logger.warning(f"消息 role '{role}' (消息 #{msg_idx}) 的 content 类型未知 ({type(raw_content).__name__})，尝试转换为字符串。")
+            try:
+                str_content = str(raw_content)
+                if str_content:
+                    gemini_parts.append({"text": str_content})
+            except Exception as e_str_conv:
+                logger.error(f"无法将未知类型的 content ({type(raw_content).__name__}) (消息 #{msg_idx}) 转换为字符串: {e_str_conv}")
+
+        if gemini_parts:
+            gemini_contents.append({"role": gemini_role, "parts": gemini_parts})
+        elif role and raw_content is None:
+             logger.info(f"OpenAI 消息 (role: {role}, 消息 #{msg_idx}) content 为 None，转换后无有效 parts，此消息未添加到 Gemini contents。")
+        elif not gemini_parts and raw_content:
+            logger.warning(f"OpenAI 消息 (role: {role}, 消息 #{msg_idx}) content 无法转换为有效的 Gemini parts，此消息未添加到 Gemini contents。原始 content: {str(raw_content)[:200]}")
 
     # 构建 Gemini 请求体
     gemini_request: Dict[str, Any] = {
