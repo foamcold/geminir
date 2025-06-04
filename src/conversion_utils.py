@@ -51,6 +51,9 @@ def convert_openai_to_gemini_request(
     # 记录初始的 OpenAI 请求
     logger.debug(f"初始的 OpenAI 请求: {json.dumps(original_openai_request, ensure_ascii=False, default=str)}")
     
+    # 新增日志：打印传入的 prepared_messages
+    logger.debug(f"进入 convert_openai_to_gemini_request 时，prepared_messages 内容: {json.dumps(prepared_messages, ensure_ascii=False, default=str)}")
+
     # 1. 使用传入的已预处理的 OpenAI 消息
     openai_messages = prepared_messages # 直接使用传入的处理后消息
     # original_model_name 通常在调用此函数之前从 prepared_data 中提取，
